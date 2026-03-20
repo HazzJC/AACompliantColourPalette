@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Distinct Colour Palette Generator</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    // --- Icon Components ---
+    const IconCopy = ({ size = 24, className = "" }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+    );
+
+    const IconRefresh = ({ size = 24, className = "" }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+    );
+
+    const IconCheck = ({ size = 24, className = "" }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="20 6 9 17 4 12"/></svg>
+    );
+
+    const IconCheckCircle = ({ size = 24, className = "" }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+    );
+
+    const IconAlert = ({ size = 24, className = "" }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+    );
+
+    // --- Colour Science Utility Functions ---
+    const hslToHex = (h, s, l) => {
+      l /= 100;
+      const a = s * Math.min(l, 1 - l) / 100;
+      const f = n => {
+        const k = (n + h / 30) % 12;
+        const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+        return Math.round(255 * color).toString(16).padStart(2, '0');
+      };
+      return `#${f(0)}${f(8)}${f(4)}`.toUpperCase();
+    };
+
+    const hexToRgb = (hex) => {
+      const normalized = normalizeHex(hex);
+      if (!normalized) return null;
+
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(normalized);
+      return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+      } : null;
+    };
+
+    const normalizeHex = (hex) => {
+      if (!hex) return null;
+      let value = hex.trim().replace(/^#/, "");
+
+      if (/^[a-fA-F\d]{3}$/.test(value)) {
+        value = value.split("").map(char => char + char).join("");
+      }
+
+      if (!/^[a-fA-F\d]{6}$/.test(value)) return null;
+
+      return `#${value.toUpperCase()}`;
+    };
+
+    const parseHexList = (input) => {
+      const rawItems = input
+        .split(",")
+        .map(item => item.trim())
+        .filter(Boolean);
+
+      const valid = [];
+      const invalid = [];
+
+      rawItems.forEach(item => {
+        const normalized = normalizeHex(item);
+        if (normalized) {
+          valid.push(normalized);
+        } else {
+          invalid.push(item);
+        }
+      });
+
+      return {
+        valid: [...new Set(valid)],
+        invalid
+      };
+    };
+
+    const getLuminance = (r, g, b) => {
+      const a = [r, g, b].map((v) => {
+        v /= 255;
+        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      });
+      return a[0] * 0.2126 + a[1] * 0.7152 + a[2] * 0.0722;
+    };
+
+    const getContrastRatio = (hex1, hex2) => {
+      const rgb1 = hexToRgb(hex1);
+      const rgb2 = hexToRgb(hex2);
+      if (!rgb1 || !rgb2) return 1;
+
+      const lum1 = getLuminance(rgb1.r, rgb1.g, rgb1.b);
+      const lum2 = getLuminance(rgb2.r, rgb2.g, rgb2.b);
+      const brightest = Math.max(lum1, lum2);
+      const darkest = Math.min(lum1, lum2);
+      return (brightest + 0.05) / (darkest + 0.05);
+    };
+
+    const getContrastYIQ = (hexcolor) => {
+      const rgb = hexToRgb(hexcolor);
+      if (!rgb) return "black";
+      const yiq = ((rgb.r * 299) + (rgb.g * 587) + (rgb.b * 114)) / 1000;
+      return (yiq >= 128) ? "#000000" : "#FFFFFF";
+    };
+
+    const enforceContrast = (h, s, initialL, bgHex, targetRatio, isDarkBg) => {
+      let l = initialL;
+      const step = isDarkBg ? 1 : -1;
+
+      while (l >= 0 && l <= 100) {
+        const hex = hslToHex(h, s, l);
+        if (getContrastRatio(hex, bgHex) >= targetRatio) {
+          return l;
+        }
+        l += step;
+      }
+      return isDarkBg ? 100 : 0;
+    };
+
+    const buildColorMeta = (hex, backgroundHex) => {
+      const ratio = getContrastRatio(hex, backgroundHex);
+      return {
+        hex,
+        ratio: ratio.toFixed(2),
+        isAA: ratio >= 4.5,
+        isAAA: ratio >= 7.0,
+        isLargeAA: ratio >= 3.1
+      };
+    };
+
+    const SwatchGrid = ({ colors, isDarkBg, copiedHex, copyToClipboard }) => (
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4 gap-4 md:gap-6">
+        {colors.map((color, idx) => (
+          <div
+            key={`${color.hex}-${idx}`}
+            className={`group flex flex-col rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 border ${isDarkBg ? 'border-gray-800' : 'border-gray-200'}`}
+          >
+            <div
+              className="h-32 md:h-40 w-full relative cursor-pointer flex items-center justify-center transition-transform"
+              style={{ backgroundColor: color.hex }}
+              onClick={() => copyToClipboard(color.hex)}
+              title="Click to copy hex code"
+            >
+              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm bg-black/10">
+                {copiedHex === color.hex ? (
+                  <span className="flex items-center gap-2 font-medium" style={{ color: getContrastYIQ(color.hex) }}>
+                    <IconCheck size={20} /> Copied!
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2 font-medium" style={{ color: getContrastYIQ(color.hex) }}>
+                    <IconCopy size={20} /> Copy Hex
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className={`p-4 flex flex-col gap-3 ${isDarkBg ? 'bg-gray-800 text-gray-200' : 'bg-white text-gray-800'}`}>
+              <div className="flex justify-between items-center">
+                <span className="font-mono font-bold text-lg">{color.hex}</span>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="opacity-70">Ratio</span>
+                  <span className={`font-mono font-semibold ${color.ratio >= 4.5 ? 'text-green-500' : 'text-red-500'}`}>
+                    {color.ratio}:1
+                  </span>
+                </div>
+
+                <div className="flex gap-2 text-xs font-semibold">
+                  <span className={`flex-1 flex justify-center items-center py-1 rounded-md ${color.isAA ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-red-100 text-red-700 border border-red-200'}`}>
+                    AA {color.isAA && <IconCheckCircle size={12} className="ml-1" />}
+                  </span>
+                  <span className={`flex-1 flex justify-center items-center py-1 rounded-md ${color.isAAA ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-red-100 text-red-700 border border-red-200'}`}>
+                    AAA {color.isAAA && <IconCheckCircle size={12} className="ml-1" />}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+
+    // --- Main Application Component ---
+    function App() {
+      const [numColours, setNumColours] = useState(8);
+      const [palette, setPalette] = useState([]);
+      const [bgType, setBgType] = useState("light");
+      const [forceCompliance, setForceCompliance] = useState("none");
+      const [baseHue, setBaseHue] = useState(Math.random() * 360);
+      const [copiedHex, setCopiedHex] = useState(null);
+      const [hueSpread, setHueSpread] = useState(360);
+
+      const [comparisonInput, setComparisonInput] = useState("");
+      const [comparisonPalette, setComparisonPalette] = useState([]);
+      const [invalidComparisonHexes, setInvalidComparisonHexes] = useState([]);
+
+      const backgroundHex = bgType === "light" ? "#F9FAFB" : "#111827";
+      const isDarkBg = bgType === "dark";
+
+      const generatePalette = useCallback(() => {
+        const newPalette = [];
+        let currentHue = baseHue;
+
+        const targetRatio = forceCompliance === "AAA" ? 7.0 : (forceCompliance === "AA" ? 4.5 : 0);
+        const stepSize = hueSpread / numColours;
+
+        for (let i = 0; i < numColours; i++) {
+          let h = currentHue % 360;
+          let s = 65 + (i % 3) * 10;
+          let l = 45 + (i % 4) * 10;
+
+          if (targetRatio > 0) {
+            l = enforceContrast(h, s, l, backgroundHex, targetRatio, isDarkBg);
+          }
+
+          const hex = hslToHex(h, s, l);
+          const ratio = getContrastRatio(hex, backgroundHex);
+
+          newPalette.push({
+            hex, h, s, l,
+            ratio: ratio.toFixed(2),
+            isAA: ratio >= 4.5,
+            isAAA: ratio >= 7.0,
+            isLargeAA: ratio >= 3.1
+          });
+
+          currentHue += stepSize;
+        }
+
+        setPalette(newPalette);
+      }, [numColours, baseHue, forceCompliance, backgroundHex, isDarkBg, hueSpread]);
+
+      useEffect(() => {
+        generatePalette();
+      }, [generatePalette]);
+
+      useEffect(() => {
+        const { valid, invalid } = parseHexList(comparisonInput);
+        setComparisonPalette(valid.map(hex => buildColorMeta(hex, backgroundHex)));
+        setInvalidComparisonHexes(invalid);
+      }, [comparisonInput, backgroundHex]);
+
+      const handleRegenerate = () => {
+        setBaseHue(Math.random() * 360);
+      };
+
+      const copyToClipboard = (hex) => {
+        navigator.clipboard.writeText(hex).then(() => {
+          setCopiedHex(hex);
+          setTimeout(() => setCopiedHex(null), 2000);
+        });
+      };
+
+      return (
+        <div className="min-h-screen bg-gray-50 text-gray-900 font-sans p-6 md:p-10 transition-colors duration-300">
+          <div className="max-w-7xl mx-auto space-y-8">
+
+            <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+              <div>
+                <h1 className="text-3xl font-bold tracking-tight text-gray-900">Distinct Colour Palette</h1>
+                <p className="text-gray-500 mt-2 text-sm md:text-base max-w-xl">
+                  Generates complementary, aesthetically pleasing palettes using Golden Angle hue distribution. Adjust settings to ensure compliance with WCAG accessibility standards.
+                </p>
+              </div>
+              <button
+                onClick={handleRegenerate}
+                className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-medium transition-all shadow-sm active:scale-95 whitespace-nowrap"
+              >
+                <IconRefresh size={18} />
+                Regenerate Colours
+              </button>
+            </header>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-center">
+                <label className="flex justify-between items-center mb-4 font-semibold text-gray-700">
+                  <span>Number of Colours</span>
+                  <span className="bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full text-sm">{numColours}</span>
+                </label>
+                <input
+                  type="range" min="3" max="16" value={numColours}
+                  onChange={(e) => setNumColours(parseInt(e.target.value))}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+                <div className="flex justify-between text-xs text-gray-400 mt-2">
+                  <span>3</span><span>16</span>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-center">
+                <label className="flex justify-between items-center mb-4 font-semibold text-gray-700">
+                  <span>Colour Distinctness</span>
+                  <span className="bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full text-sm">
+                    {Math.round((hueSpread / 360) * 100)}%
+                  </span>
+                </label>
+                <input
+                  type="range" min="30" max="360" step="10" value={hueSpread}
+                  onChange={(e) => setHueSpread(parseFloat(e.target.value))}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+                <div className="flex justify-between text-xs text-gray-400 mt-2">
+                  <span>Similar</span><span>Distinct</span>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-center">
+                <span className="mb-4 font-semibold text-gray-700 block">Test Background</span>
+                <div className="flex bg-gray-100 p-1 rounded-xl">
+                  <button
+                    onClick={() => setBgType("light")}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${bgType === "light" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
+                  >
+                    Light Theme
+                  </button>
+                  <button
+                    onClick={() => setBgType("dark")}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${bgType === "dark" ? "bg-gray-900 shadow-sm text-white" : "text-gray-500 hover:text-gray-700"}`}
+                  >
+                    Dark Theme
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-center">
+                <span className="mb-4 font-semibold text-gray-700 block">Force Contrast Compliance</span>
+                <select
+                  value={forceCompliance}
+                  onChange={(e) => setForceCompliance(e.target.value)}
+                  className="w-full bg-gray-50 border border-gray-200 text-gray-700 py-2.5 px-4 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                >
+                  <option value="none">Do Not Force (Natural Aesthetics)</option>
+                  <option value="AA">Force AA Normal Text (≥ 4.5:1)</option>
+                  <option value="AAA">Force AAA Normal Text (≥ 7.0:1)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Comparison Swatch</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Paste a comma separated list of hex codes to compare them against the current background.
+                </p>
+              </div>
+
+              <textarea
+                value={comparisonInput}
+                onChange={(e) => setComparisonInput(e.target.value)}
+                placeholder="#FF5733, #3366FF, #22C55E, ABC"
+                rows="3"
+                className="w-full bg-gray-50 border border-gray-200 text-gray-700 py-3 px-4 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-mono text-sm resize-y"
+              />
+
+              {invalidComparisonHexes.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  Invalid hex code{invalidComparisonHexes.length > 1 ? "s" : ""}:{" "}
+                  <span className="font-mono">{invalidComparisonHexes.join(", ")}</span>
+                </div>
+              )}
+
+              {comparisonPalette.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between text-sm text-gray-500">
+                    <span>{comparisonPalette.length} valid colour{comparisonPalette.length > 1 ? "s" : ""}</span>
+                    <span>Shorthand 3 digit hex is supported</span>
+                  </div>
+
+                  <SwatchGrid
+                    colors={comparisonPalette}
+                    isDarkBg={isDarkBg}
+                    copiedHex={copiedHex}
+                    copyToClipboard={copyToClipboard}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div
+              className="rounded-3xl p-6 md:p-10 transition-colors duration-500 ease-in-out border border-gray-200/50 shadow-inner"
+              style={{ backgroundColor: backgroundHex }}
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h2 className={`text-xl font-semibold ${isDarkBg ? "text-gray-100" : "text-gray-800"}`}>
+                  Generated Swatches
+                </h2>
+                <div className={`text-sm flex items-center gap-2 ${isDarkBg ? "text-gray-400" : "text-gray-500"}`}>
+                  <IconAlert size={16} />
+                  <span>Contrasts evaluated against the current background</span>
+                </div>
+              </div>
+
+              <SwatchGrid
+                colors={palette}
+                isDarkBg={isDarkBg}
+                copiedHex={copiedHex}
+                copyToClipboard={copyToClipboard}
+              />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
